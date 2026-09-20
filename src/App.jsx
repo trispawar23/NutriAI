@@ -355,6 +355,16 @@ function Onboarding({ calories, setCalories, protein, setProtein, fibre, setFibr
   );
 }
 
+// The layout is designed as a phone screen. Without this the screens sprawl
+// across a desktop window while onboarding stays a narrow column.
+function Screen({ children }) {
+  return (
+    <div className="min-h-screen bg-[#0F0F13] text-[#F5F5F0] px-6 py-8 font-['Space_Grotesk']">
+      <div className="max-w-sm mx-auto w-full">{children}</div>
+    </div>
+  );
+}
+
 function Ring({ pct, color, size = 84, stroke = 9 }) {
   const r = (size - stroke) / 2;
   const c = 2 * Math.PI * r;
@@ -544,7 +554,7 @@ function Picks({ deviceId, today, protein, fibre, carbs, remaining, ranked, cart
 
   if (view === "order") {
     return (
-      <div className="min-h-screen bg-[#0F0F13] text-[#F5F5F0] px-5 py-8 font-['Space_Grotesk']">
+      <Screen>
         <style>{`@keyframes fadeSlide { from { opacity:0; transform: translateY(8px); } to { opacity:1; transform: translateY(0); } }`}</style>
         <button onClick={() => setView("choose")} className="text-white/40 text-sm mb-6 font-mono">← back</button>
         {rings}
@@ -568,13 +578,13 @@ function Picks({ deviceId, today, protein, fibre, carbs, remaining, ranked, cart
         </button>
 
         {cartSection}
-      </div>
+      </Screen>
     );
   }
 
   // choose (default)
   return (
-    <div className="min-h-screen bg-[#0F0F13] text-[#F5F5F0] px-5 py-8 font-['Space_Grotesk']">
+    <Screen>
       <button onClick={onBack} className="text-white/40 text-sm mb-6 font-mono">← edit targets</button>
       {rings}
 
@@ -596,7 +606,7 @@ function Picks({ deviceId, today, protein, fibre, carbs, remaining, ranked, cart
       </button>
 
       {cartSection}
-    </div>
+    </Screen>
   );
 }
 
@@ -628,7 +638,7 @@ function NutriAI({ remaining, onLog, onBack }) {
     : null;
 
   return (
-    <div className="min-h-screen bg-[#0F0F13] text-[#F5F5F0] px-6 py-8 font-['Space_Grotesk']">
+    <Screen>
       <button onClick={onBack} className="text-white/40 text-sm mb-6 font-mono">← back</button>
       <h1 className="text-2xl font-extrabold mb-6">NutriAI</h1>
 
@@ -694,7 +704,7 @@ function NutriAI({ remaining, onLog, onBack }) {
           </button>
         </div>
       )}
-    </div>
+    </Screen>
   );
 }
 
@@ -746,11 +756,11 @@ function AddDish({ onLog, onBack }) {
   }
 
   const shell = (children) => (
-    <div className="min-h-screen bg-[#0F0F13] text-[#F5F5F0] px-6 py-8 font-['Space_Grotesk']">
+    <Screen>
       <button onClick={onBack} className="text-white/40 text-sm mb-6 font-mono">← back</button>
       {children}
       {error && <p className="text-[#FF6B4A] text-sm mt-3">{error}</p>}
-    </div>
+    </Screen>
   );
 
   // A submitted dish is 'pending', and the app's key can only read verified
@@ -869,7 +879,7 @@ function ManualLog({ onLog, onBack }) {
   const [fibre, setFibre] = useState(0);
 
   return (
-    <div className="min-h-screen bg-[#0F0F13] text-[#F5F5F0] px-6 py-8 font-['Space_Grotesk']">
+    <Screen>
       <button onClick={onBack} className="text-white/40 text-sm mb-6 font-mono">← back</button>
       <h1 className="text-2xl font-extrabold mb-1">Log something</h1>
       <p className="text-white/40 text-sm mb-6">For anything not in the app — you know the numbers, we'll just add them up.</p>
@@ -889,7 +899,7 @@ function ManualLog({ onLog, onBack }) {
         className="mt-8 w-full bg-[#C6FF3D] text-black py-4 rounded-2xl font-extrabold text-lg disabled:opacity-30 active:scale-[0.98] transition-transform">
         Log it
       </button>
-    </div>
+    </Screen>
   );
 }
 
