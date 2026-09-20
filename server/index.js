@@ -8,7 +8,7 @@ const app = express();
 app.use(cors());
 app.use(express.json());
 
-const KNOWN_ALLERGENS = ["gluten", "dairy", "soy", "nuts", "egg"];
+const KNOWN_ALLERGENS = ["gluten", "dairy", "soy", "nuts", "egg", "fish"];
 
 // Tell the user the model was busy rather than blaming their input.
 function sendModelError(res, err, fallback) {
@@ -29,7 +29,7 @@ Given the raw text below, extract:
 - dish_name
 - restaurant_name
 - is_veg (true/false, best guess if not stated)
-- allergens (array from: gluten, dairy, soy, nuts, egg — only if clearly indicated)
+- allergens (array from: gluten, dairy, soy, nuts, egg, fish — only if clearly indicated)
 - protein_g, carbs_g, fibre_g (numbers, per single serving as described)
 - confidence ("high" if numbers are explicitly stated, "low" if estimated/inferred)
 - source_note (one sentence on where these numbers came from)

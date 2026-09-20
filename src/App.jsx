@@ -2,7 +2,7 @@ import { useState, useMemo, useEffect } from "react";
 import { supabase } from "./supabase";
 import { postJSON } from "./api";
 
-const ALLERGENS = ["gluten", "dairy", "soy", "nuts", "egg"];
+const ALLERGENS = ["gluten", "dairy", "soy", "nuts", "egg", "fish"];
 
 const WEIGHTS = { protein: 1.5, fibre: 1.1, carbs: 0.6 };
 const COLORS = { protein: "#C6FF3D", fibre: "#34E4A0", carbs: "#FF6B4A" };
@@ -59,7 +59,11 @@ function computeMacros({ weight, height, age, sex, activity, goal }) {
 
 function scoreDish(dish, remaining) {
   let score = 0;
-  const macros = dish.fibre === null ? ["protein", "carbs"] : ["protein", "fibre", "carbs"];
+  // A fibre number nobody has confirmed should not pull a dish up the list.
+  // Contributed dishes can carry an unverified figure, not just a null one.
+  const macros = dish.fibre == null || !dish.fibreVerified
+    ? ["protein", "carbs"]
+    : ["protein", "fibre", "carbs"];
   for (const macro of macros) {
     const target = remaining[macro];
     const value = dish[macro];
@@ -171,7 +175,7 @@ function App() {
       }} />;
   }
 
-  return <Picks {...{ deviceId, today, protein, fibre, carbs, remaining, ranked, cart, setCart, setDishes }}
+  return <Picks {...{ deviceId, today, protein, fibre, carbs, remaining, ranked, cart, setCart }}
     onBack={() => setScreen("onboarding")} />;
 }
 
@@ -392,12 +396,7 @@ function DishCard({ dish, onAdd, index }) {
       <div className="flex-1 flex justify-between items-center p-3.5">
         <div>
           <p className="font-['Space_Grotesk'] font-bold text-white text-[15px]">{dish.name}</p>
-          <p className="text-white/40 text-xs mb-1">
-            {dish.restaurant}
-            {dish.status && dish.status !== "verified" && (
-              <span className="ml-2 bg-white/10 text-white/50 text-[10px] font-mono px-1.5 py-0.5 rounded-full">unreviewed</span>
-            )}
-          </p>
+          <p className="text-white/40 text-xs mb-1">{dish.restaurant}</p>
           <div className="flex gap-3 font-mono text-xs">
             <span style={{ color: COLORS.protein }}>P{dish.protein}</span>
             {dish.fibreVerified ? <span style={{ color: COLORS.fibre }}>F{dish.fibre}</span> : <span className="text-white/30">F —</span>}
@@ -469,7 +468,7 @@ function CartItem({ dish, remaining }) {
   );
 }
 
-function Picks({ deviceId, today, protein, fibre, carbs, remaining, ranked, cart, setCart, setDishes, onBack }) {
+function Picks({ deviceId, today, protein, fibre, carbs, remaining, ranked, cart, setCart, onBack }) {
   const [view, setView] = useState("choose"); // choose | order | cook | manual | add
   const [query, setQuery] = useState("");
 
@@ -525,15 +524,7 @@ function Picks({ deviceId, today, protein, fibre, carbs, remaining, ranked, cart
   if (view === "manual") return <ManualLog onBack={() => setView("choose")} onLog={(item) => logItem(item)} />;
 
   if (view === "add") {
-    return (
-      <AddDish
-        onBack={() => setView("order")}
-        onAdded={(dish) => {
-          setDishes((prev) => [...prev, dish]);
-          setView("order");
-        }}
-      />
-    );
+    return <AddDish onBack={() => setView("order")} onLog={(dish) => logItem(dish)} />;
   }
 
   if (view === "order") {
@@ -692,9 +683,10 @@ function NutriAI({ remaining, onLog, onBack }) {
   );
 }
 
-function AddDish({ onAdded, onBack }) {
+function AddDish({ onLog, onBack }) {
   const [rawText, setRawText] = useState("");
   const [draft, setDraft] = useState(null);
+  const [saved, setSaved] = useState(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState(null);
 
@@ -720,11 +712,11 @@ function AddDish({ onAdded, onBack }) {
     setBusy(true);
     setError(null);
     try {
-      onAdded(toDish(await postJSON("/dishes", draft)));
+      setSaved(toDish(await postJSON("/dishes", draft)));
     } catch (err) {
       setError(err.message);
-      setBusy(false);
     }
+    setBusy(false);
   }
 
   function edit(patch) {
@@ -738,6 +730,29 @@ function AddDish({ onAdded, onBack }) {
       {error && <p className="text-[#FF6B4A] text-sm mt-3">{error}</p>}
     </div>
   );
+
+  // A submitted dish is 'pending', and the app's key can only read verified
+  // dishes, so it will not turn up in the list until someone reviews it.
+  // Saying so beats having it silently disappear on the next load.
+  if (saved) {
+    return shell(
+      <>
+        <h1 className="text-2xl font-extrabold mb-1">Sent for review</h1>
+        <p className="text-white/40 text-sm mb-6">
+          <b className="text-white/70">{saved.name}</b> from {saved.restaurant} is in the queue. It shows up for
+          everyone once it has been checked.
+        </p>
+
+        <button onClick={() => onLog(saved)}
+          className="w-full bg-[#C6FF3D] text-black py-4 rounded-2xl font-extrabold text-lg active:scale-[0.98] transition-transform">
+          Log it to today anyway
+        </button>
+        <button onClick={onBack} className="mt-3 w-full bg-white/5 text-white/70 py-4 rounded-2xl font-bold text-lg active:scale-[0.98] transition-transform">
+          Back to dishes
+        </button>
+      </>
+    );
+  }
 
   if (!draft) {
     return shell(
