@@ -478,6 +478,13 @@ function Picks({ deviceId, today, protein, fibre, carbs, remaining, ranked, cart
   const [view, setView] = useState("choose"); // choose | order | cook | manual | add
   const [query, setQuery] = useState("");
 
+  // Each view is a full page swapped in place, so without this you arrive at
+  // the next one still scrolled to wherever you left the last. The dish list
+  // is long enough that the heading ends up off-screen.
+  useEffect(() => {
+    window.scrollTo(0, 0);
+  }, [view]);
+
   const matches = useMemo(() => {
     const q = query.trim().toLowerCase();
     if (!q) return ranked;
@@ -697,6 +704,13 @@ function AddDish({ onLog, onBack }) {
   const [saved, setSaved] = useState(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState(null);
+
+  // Keyed on the step, not the draft, so editing a macro does not jump the
+  // page while the user is working through the review form.
+  const step = saved ? "saved" : draft ? "review" : "paste";
+  useEffect(() => {
+    window.scrollTo(0, 0);
+  }, [step]);
 
   async function extract() {
     setBusy(true);
