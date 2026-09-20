@@ -4,6 +4,19 @@ import { supabase } from "./supabase";
 const WEIGHTS = { protein: 1.5, fibre: 1.1, carbs: 0.6 };
 const COLORS = { protein: "#C6FF3D", fibre: "#34E4A0", carbs: "#FF6B4A" };
 
+function getDeviceId() {
+  let id = localStorage.getItem("nutrition_app_device_id");
+  if (!id) {
+    id = crypto.randomUUID();
+    localStorage.setItem("nutrition_app_device_id", id);
+  }
+  return id;
+}
+
+function todayStr() {
+  return new Date().toISOString().split("T")[0];
+}
+
 function computeMacros({ weight, height, age, sex, activity, goal }) {
   const bmr = sex === "male"
     ? 10 * weight + 6.25 * height - 5 * age + 5
@@ -99,20 +112,7 @@ function App() {
       setLoaded(true);
     }
     loadEverything();
-  }, [])};
-
-  function getDeviceId() {
-  let id = localStorage.getItem("nutrition_app_device_id");
-  if (!id) {
-    id = crypto.randomUUID();
-    localStorage.setItem("nutrition_app_device_id", id);
-  }
-  return id;
-}
-
-function todayStr() {
-  return new Date().toISOString().split("T")[0];
-}
+  }, [deviceId, today]);
 
   function toggleAllergen(name) {
     setAllergies((prev) => prev.includes(name) ? prev.filter((a) => a !== name) : [...prev, name]);
@@ -131,6 +131,14 @@ function todayStr() {
       .sort((a, b) => b._score - a._score);
   }, [dishes, remaining, diet, allergies]);
 
+  if (!loaded) {
+    return (
+      <div className="min-h-screen bg-[#0F0F13] flex items-center justify-center">
+        <p className="text-white/30 text-sm font-mono">loading today…</p>
+      </div>
+    );
+  }
+
   if (screen === "onboarding") {
     return <Onboarding {...{ calories, setCalories, protein, setProtein, fibre, setFibre, carbs, setCarbs, diet, setDiet, allergies, toggleAllergen }}
       onDone={async () => {
@@ -141,6 +149,10 @@ function todayStr() {
         setScreen("picks");
       }} />;
   }
+
+  return <Picks {...{ deviceId, today, protein, fibre, carbs, remaining, ranked, cart, setCart }}
+    onBack={() => setScreen("onboarding")} />;
+}
 
 function Stepper({ label, value, onChange, color, step = 5 }) {
   return (
@@ -432,7 +444,7 @@ function CartItem({ dish, remaining }) {
   );
 }
 
-function Picks({ protein, fibre, carbs, remaining, ranked, cart, setCart, onBack }) {
+function Picks({ deviceId, today, protein, fibre, carbs, remaining, ranked, cart, setCart, onBack }) {
   const [view, setView] = useState("choose"); // choose | order | cook | manual
 
   async function logItem(item) {
