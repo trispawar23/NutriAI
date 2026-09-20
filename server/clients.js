@@ -12,5 +12,10 @@ export const supabaseAdmin = createClient(
 
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
 
-export const model = genAI.getGenerativeModel({ model: "gemini-3.6-flash" });
+// Free-tier request quotas are counted per model per day, and for
+// gemini-3.6-flash that allowance is 20. Being able to point at another model
+// without editing code makes it possible to develop against a roomier one.
+export const model = genAI.getGenerativeModel({
+  model: process.env.GEMINI_MODEL ?? "gemini-3.6-flash",
+});
 export const embedModel = genAI.getGenerativeModel({ model: "gemini-embedding-001" });

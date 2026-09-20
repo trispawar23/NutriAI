@@ -1,4 +1,5 @@
 import { embedModel } from "./clients.js";
+import { withGeminiRetry } from "./retry.js";
 
 // Newly added dishes have to be described exactly the way the backfill script
 // describes them, or their embeddings land in a different part of the space
@@ -8,6 +9,6 @@ export function dishDescription({ name, is_veg, restaurant_name, protein_g, carb
 }
 
 export async function embedDish(dish) {
-  const result = await embedModel.embedContent(dishDescription(dish));
+  const result = await withGeminiRetry(() => embedModel.embedContent(dishDescription(dish)));
   return result.embedding.values;
 }

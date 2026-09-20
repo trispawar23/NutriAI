@@ -1,6 +1,10 @@
 -- NutriAI restaurant nutrition database.
--- Run this in the Supabase SQL editor to stand up (or document) the schema the
--- app reads from. Everything is `if not exists` so it is safe to re-run.
+--
+-- Run this in the Supabase SQL editor to stand up the schema the app reads
+-- from. Everything is `if not exists` so it is safe to re-run, but note that
+-- it will NOT alter tables that already exist. The project this was written
+-- against predates the file and is missing the created_at columns and the
+-- unique constraints below; the server does not depend on either.
 
 create extension if not exists vector;
 
@@ -26,6 +30,9 @@ create table if not exists dishes (
   -- fibre number as unknown rather than as zero.
   fibre_g numeric,
   fibre_verified boolean not null default false,
+  -- Seeded dishes are 'verified'. Anything contributed through the app lands
+  -- as 'pending' and is labelled unreviewed in the UI until promoted.
+  status text not null default 'pending' check (status in ('verified', 'pending')),
   -- gemini-embedding-001 returns 3072 dimensions. pgvector's ivfflat and hnsw
   -- indexes both cap out at 2000, so similarity search is a sequential scan.
   embedding vector(3072),

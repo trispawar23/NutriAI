@@ -18,6 +18,7 @@ function toDish(row) {
     carbs: row.carbs_g,
     fibre: row.fibre_g,
     fibreVerified: row.fibre_verified,
+    status: row.status,
   };
 }
 
@@ -108,7 +109,7 @@ function App() {
     async function loadFromSupabase() {
       const { data: dishData, error: dishError } = await supabase
         .from("dishes")
-        .select("id, name, is_veg, allergens, protein_g, carbs_g, fibre_g, fibre_verified, restaurants(name)");
+        .select("id, name, is_veg, allergens, protein_g, carbs_g, fibre_g, fibre_verified, status, restaurants(name)");
       if (dishError) console.error(dishError);
       else setDishes(dishData.map(toDish));
 
@@ -391,7 +392,12 @@ function DishCard({ dish, onAdd, index }) {
       <div className="flex-1 flex justify-between items-center p-3.5">
         <div>
           <p className="font-['Space_Grotesk'] font-bold text-white text-[15px]">{dish.name}</p>
-          <p className="text-white/40 text-xs mb-1">{dish.restaurant}</p>
+          <p className="text-white/40 text-xs mb-1">
+            {dish.restaurant}
+            {dish.status && dish.status !== "verified" && (
+              <span className="ml-2 bg-white/10 text-white/50 text-[10px] font-mono px-1.5 py-0.5 rounded-full">unreviewed</span>
+            )}
+          </p>
           <div className="flex gap-3 font-mono text-xs">
             <span style={{ color: COLORS.protein }}>P{dish.protein}</span>
             {dish.fibreVerified ? <span style={{ color: COLORS.fibre }}>F{dish.fibre}</span> : <span className="text-white/30">F —</span>}
@@ -474,7 +480,10 @@ function Picks({ deviceId, today, protein, fibre, carbs, remaining, ranked, cart
   }, [ranked, query]);
 
   async function logItem(item) {
-    const source = item.estimated ? "estimated" : item.selfLogged ? "self_logged" : "verified";
+    // A dish someone pasted in has not been reviewed, so its numbers are no
+    // more trustworthy than an AI estimate.
+    const unreviewed = item.status && item.status !== "verified";
+    const source = item.estimated || unreviewed ? "estimated" : item.selfLogged ? "self_logged" : "verified";
     await supabase.from("logged_meals").insert({
       device_id: deviceId, date: today,
       name: item.name, restaurant: item.restaurant || null,
@@ -567,7 +576,7 @@ function Picks({ deviceId, today, protein, fibre, carbs, remaining, ranked, cart
       <button onClick={() => setView("order")}
         className="w-full bg-[#1B1B22] text-left px-4 py-4 rounded-xl mb-2.5 flex items-center justify-between active:scale-[0.98] transition-transform">
         <span className="font-bold">🍔 Order something</span>
-        <span className="text-white/30 text-sm">from {ranked.length} verified dishes</span>
+        <span className="text-white/30 text-sm">from {ranked.length} dishes</span>
       </button>
       <button onClick={() => setView("cook")}
         className="w-full bg-[#1B1B22] text-left px-4 py-4 rounded-xl mb-2.5 flex items-center justify-between active:scale-[0.98] transition-transform">

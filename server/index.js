@@ -2,12 +2,24 @@ import express from "express";
 import cors from "cors";
 import { model, supabaseAdmin } from "./clients.js";
 import { embedDish } from "./dish-embedding.js";
+import { withGeminiRetry } from "./retry.js";
 
 const app = express();
 app.use(cors());
 app.use(express.json());
 
 const KNOWN_ALLERGENS = ["gluten", "dairy", "soy", "nuts", "egg"];
+
+// Tell the user the model was busy rather than blaming their input.
+function sendModelError(res, err, fallback) {
+  console.error(err);
+  const status = err?.status === 503 ? 503 : 500;
+  res.status(status).json({ error: status === 503 ? err.message : fallback });
+}
+
+function generate(prompt) {
+  return withGeminiRetry(() => model.generateContent(prompt));
+}
 
 app.post("/extract", async (req, res) => {
   const { rawText } = req.body;
@@ -29,14 +41,12 @@ Raw text:
 ${rawText}`;
 
   try {
-    const result = await model.generateContent(prompt);
-    console.log("Raw Gemini response:", JSON.stringify(result.response, null, 2));
+    const result = await generate(prompt);
     const text = result.response.text().trim();
     const parsed = JSON.parse(text.replace(/```json|```/g, "").trim());
     res.json(parsed);
   } catch (err) {
-    console.error(err);
-    res.status(500).json({ error: "extraction failed" });
+    sendModelError(res, err, "extraction failed");
   }
 });
 
@@ -45,15 +55,18 @@ function nonNegativeNumber(value) {
   return Number.isFinite(n) && n >= 0 ? n : null;
 }
 
-async function findOrCreateRestaurant(name) {
-  // Match case-insensitively so "Sweetgreen" and "sweetgreen" do not become two
-  // entries. The name is user-supplied, so neutralise ilike's wildcards.
-  const pattern = name.replace(/[\\%_]/g, (char) => `\\${char}`);
+// ilike treats % and _ as wildcards, and these names come from user input.
+function escapeLikePattern(value) {
+  return value.replace(/[\\%_]/g, (char) => `\\${char}`);
+}
 
+async function findOrCreateRestaurant(name) {
+  // Match case-insensitively so "Sweetgreen" and "sweetgreen" do not become
+  // two entries.
   const { data: existing, error: lookupError } = await supabaseAdmin
     .from("restaurants")
     .select("id")
-    .ilike("name", pattern)
+    .ilike("name", escapeLikePattern(name))
     .limit(1)
     .maybeSingle();
   if (lookupError) throw lookupError;
@@ -87,6 +100,20 @@ app.post("/dishes", async (req, res) => {
   try {
     const restaurantId = await findOrCreateRestaurant(restaurantName);
 
+    // schema.sql declares unique (restaurant_id, name), but the constraint may
+    // not exist on an older database, so check rather than rely on it. The
+    // 23505 branch below still covers two writers racing here.
+    const { data: duplicate } = await supabaseAdmin
+      .from("dishes")
+      .select("id")
+      .eq("restaurant_id", restaurantId)
+      .ilike("name", escapeLikePattern(name))
+      .limit(1)
+      .maybeSingle();
+    if (duplicate) {
+      return res.status(409).json({ error: `${name} is already listed for ${restaurantName}` });
+    }
+
     const { data: dish, error } = await supabaseAdmin
       .from("dishes")
       .insert({
@@ -100,8 +127,11 @@ app.post("/dishes", async (req, res) => {
         // Only let fibre count towards the ranking when the source stated it
         // outright rather than the model guessing a plausible number.
         fibre_verified: fibre !== null && confidence === "high",
+        // Anything pulled out of pasted text is unreviewed. The seeded dishes
+        // are 'verified'; these stay apart from them until someone says so.
+        status: "pending",
       })
-      .select("id, name, is_veg, allergens, protein_g, carbs_g, fibre_g, fibre_verified")
+      .select("id, name, is_veg, allergens, protein_g, carbs_g, fibre_g, fibre_verified, status")
       .single();
 
     if (error) {
@@ -138,11 +168,10 @@ A similar alternative is available: ${alternative.name} (${alternative.protein_g
 In one short, casual sentence, tell the user whether swapping to the alternative helps them hit their goals better, and why. Be direct and specific with numbers.`;
 
   try {
-    const result = await model.generateContent(prompt);
+    const result = await generate(prompt);
     res.json({ explanation: result.response.text().trim() });
   } catch (err) {
-    console.error(err);
-    res.status(500).json({ error: "swap generation failed" });
+    sendModelError(res, err, "swap generation failed");
   }
 });
 
@@ -168,13 +197,12 @@ Return ONLY valid JSON, no other text, in this exact shape:
 Give per-ingredient macro estimates for the actual quantity listed (not per 100g) so they can be summed into a total.`;
 
   try {
-    const result = await model.generateContent(prompt);
+    const result = await generate(prompt);
     const text = result.response.text().trim();
     const parsed = JSON.parse(text.replace(/```json|```/g, "").trim());
     res.json(parsed);
   } catch (err) {
-    console.error(err);
-    res.status(500).json({ error: "recipe generation failed" });
+    sendModelError(res, err, "recipe generation failed");
   }
 });
 
