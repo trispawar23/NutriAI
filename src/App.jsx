@@ -424,7 +424,13 @@ function CartItem({ dish, remaining }) {
       .from("dishes")
       .select("embedding")
       .eq("id", dish.id)
-      .single();
+      .maybeSingle();
+
+    if (!dishRow?.embedding) {
+      setSwap({ explanation: "No comparison available for this dish yet." });
+      setLoading(false);
+      return;
+    }
 
     const { data: matches } = await supabase.rpc("match_dishes", {
       query_embedding: dishRow.embedding,
@@ -489,7 +495,9 @@ function Picks({ deviceId, today, protein, fibre, carbs, remaining, ranked, cart
       protein_g: item.protein, carbs_g: item.carbs || null, fibre_g: item.fibre || null,
       source,
     });
-    setCart([...cart, item]);
+    // Flag it in the cart too. Besides the label, it keeps the swap lookup off
+    // a pending dish, whose row the app's key cannot read back.
+    setCart([...cart, unreviewed ? { ...item, estimated: true } : item]);
     setView("choose");
   }
 
