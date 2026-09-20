@@ -1,15 +1,8 @@
-import dotenv from "dotenv";
-import { createClient } from "@supabase/supabase-js";
-import { GoogleGenerativeAI } from "@google/generative-ai";
-
-dotenv.config();
-
-const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_SERVICE_KEY);
-const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
-const embedModel = genAI.getGenerativeModel({ model: "gemini-embedding-001" });
+import { supabaseAdmin } from "./clients.js";
+import { embedDish } from "./dish-embedding.js";
 
 async function run() {
-  const { data: dishes, error } = await supabase
+  const { data: dishes, error } = await supabaseAdmin
     .from("dishes")
     .select("id, name, is_veg, protein_g, carbs_g, fibre_g, restaurants(name)");
 
@@ -26,12 +19,9 @@ async function run() {
   console.log(`Found ${dishes.length} dishes`);
 
   for (const dish of dishes) {
-    const description = `${dish.name}, ${dish.is_veg ? "vegetarian" : "non-vegetarian"}, from ${dish.restaurants.name}, ${dish.protein_g}g protein, ${dish.carbs_g}g carbs, ${dish.fibre_g}g fibre`;
+    const embedding = await embedDish({ ...dish, restaurant_name: dish.restaurants.name });
 
-    const result = await embedModel.embedContent(description);
-    const embedding = result.embedding.values;
-
-    await supabase.from("dishes").update({ embedding }).eq("id", dish.id);
+    await supabaseAdmin.from("dishes").update({ embedding }).eq("id", dish.id);
     console.log(`Embedded: ${dish.name}`);
   }
 

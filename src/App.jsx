@@ -1,8 +1,25 @@
 import { useState, useMemo, useEffect } from "react";
 import { supabase } from "./supabase";
+import { postJSON } from "./api";
+
+const ALLERGENS = ["gluten", "dairy", "soy", "nuts", "egg"];
 
 const WEIGHTS = { protein: 1.5, fibre: 1.1, carbs: 0.6 };
 const COLORS = { protein: "#C6FF3D", fibre: "#34E4A0", carbs: "#FF6B4A" };
+
+function toDish(row) {
+  return {
+    id: row.id,
+    name: row.name,
+    restaurant: row.restaurants.name,
+    isVeg: row.is_veg,
+    allergens: row.allergens ?? [],
+    protein: row.protein_g,
+    carbs: row.carbs_g,
+    fibre: row.fibre_g,
+    fibreVerified: row.fibre_verified,
+  };
+}
 
 function getDeviceId() {
   let id = localStorage.getItem("nutrition_app_device_id");
@@ -79,17 +96,21 @@ function App() {
 
   useEffect(() => {
     async function loadEverything() {
+      try {
+        await loadFromSupabase();
+      } catch (err) {
+        // An unreachable backend should not leave the app on the splash.
+        console.error(err);
+      }
+      setLoaded(true);
+    }
+
+    async function loadFromSupabase() {
       const { data: dishData, error: dishError } = await supabase
         .from("dishes")
         .select("id, name, is_veg, allergens, protein_g, carbs_g, fibre_g, fibre_verified, restaurants(name)");
       if (dishError) console.error(dishError);
-      else {
-        setDishes(dishData.map((d) => ({
-          id: d.id, name: d.name, restaurant: d.restaurants.name, isVeg: d.is_veg,
-          allergens: d.allergens, protein: d.protein_g, carbs: d.carbs_g,
-          fibre: d.fibre_g, fibreVerified: d.fibre_verified,
-        })));
-      }
+      else setDishes(dishData.map(toDish));
 
       const { data: goalRow } = await supabase
         .from("user_goals").select("*").eq("device_id", deviceId).eq("date", today).maybeSingle();
@@ -108,9 +129,8 @@ function App() {
           estimated: m.source === "estimated", selfLogged: m.source === "self_logged",
         })));
       }
-
-      setLoaded(true);
     }
+
     loadEverything();
   }, [deviceId, today]);
 
@@ -150,7 +170,7 @@ function App() {
       }} />;
   }
 
-  return <Picks {...{ deviceId, today, protein, fibre, carbs, remaining, ranked, cart, setCart }}
+  return <Picks {...{ deviceId, today, protein, fibre, carbs, remaining, ranked, cart, setCart, setDishes }}
     onBack={() => setScreen("onboarding")} />;
 }
 
@@ -312,7 +332,7 @@ function Onboarding({ calories, setCalories, protein, setProtein, fibre, setFibr
         <div className="mt-6">
           <p className="text-white/40 text-xs uppercase tracking-wide mb-2 font-mono">Allergies</p>
           <div className="flex flex-wrap gap-2">
-            {["gluten", "dairy", "soy", "nuts"].map((a) => (
+            {ALLERGENS.map((a) => (
               <button key={a} onClick={() => toggleAllergen(a)}
                 className={`px-3 py-1.5 rounded-full text-sm font-bold transition-colors ${allergies.includes(a) ? "bg-[#FF6B4A] text-black" : "bg-white/5 text-white/60"}`}>
                 {a}
@@ -415,17 +435,16 @@ function CartItem({ dish, remaining }) {
 
     const alternative = matches[0];
 
-    const res = await fetch("http://localhost:3001/swap", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
+    try {
+      const data = await postJSON("/swap", {
         currentDish: { name: dish.name, protein_g: dish.protein, fibre_g: dish.fibre, carbs_g: dish.carbs },
         alternative: { name: alternative.name, protein_g: alternative.protein_g, fibre_g: alternative.fibre_g, carbs_g: alternative.carbs_g },
         remaining,
-      }),
-    });
-    const data = await res.json();
-    setSwap({ name: alternative.name, explanation: data.explanation });
+      });
+      setSwap({ name: alternative.name, explanation: data.explanation });
+    } catch (err) {
+      setSwap({ explanation: err.message });
+    }
     setLoading(false);
   }
 
@@ -444,8 +463,15 @@ function CartItem({ dish, remaining }) {
   );
 }
 
-function Picks({ deviceId, today, protein, fibre, carbs, remaining, ranked, cart, setCart, onBack }) {
-  const [view, setView] = useState("choose"); // choose | order | cook | manual
+function Picks({ deviceId, today, protein, fibre, carbs, remaining, ranked, cart, setCart, setDishes, onBack }) {
+  const [view, setView] = useState("choose"); // choose | order | cook | manual | add
+  const [query, setQuery] = useState("");
+
+  const matches = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    if (!q) return ranked;
+    return ranked.filter((d) => `${d.name} ${d.restaurant}`.toLowerCase().includes(q));
+  }, [ranked, query]);
 
   async function logItem(item) {
     const source = item.estimated ? "estimated" : item.selfLogged ? "self_logged" : "verified";
@@ -489,16 +515,43 @@ function Picks({ deviceId, today, protein, fibre, carbs, remaining, ranked, cart
   if (view === "cook") return <NutriAI remaining={remaining} onBack={() => setView("choose")} onLog={(item) => logItem({ ...item, estimated: true })} />;
   if (view === "manual") return <ManualLog onBack={() => setView("choose")} onLog={(item) => logItem(item)} />;
 
+  if (view === "add") {
+    return (
+      <AddDish
+        onBack={() => setView("order")}
+        onAdded={(dish) => {
+          setDishes((prev) => [...prev, dish]);
+          setView("order");
+        }}
+      />
+    );
+  }
+
   if (view === "order") {
     return (
       <div className="min-h-screen bg-[#0F0F13] text-[#F5F5F0] px-5 py-8 font-['Space_Grotesk']">
         <style>{`@keyframes fadeSlide { from { opacity:0; transform: translateY(8px); } to { opacity:1; transform: translateY(0); } }`}</style>
         <button onClick={() => setView("choose")} className="text-white/40 text-sm mb-6 font-mono">← back</button>
         {rings}
-        <p className="text-white/40 text-xs uppercase tracking-wide mb-3 font-mono">Best fit right now</p>
-        {ranked.map((d, i) => (
+
+        <input
+          value={query} onChange={(e) => setQuery(e.target.value)}
+          placeholder="Search dishes or restaurants"
+          className="w-full bg-white/5 text-white text-sm px-4 py-2.5 rounded-xl mb-4 outline-none placeholder:text-white/30"
+        />
+
+        <p className="text-white/40 text-xs uppercase tracking-wide mb-3 font-mono">
+          {query.trim() ? `${matches.length} match${matches.length === 1 ? "" : "es"}` : "Best fit right now"}
+        </p>
+        {matches.map((d, i) => (
           <DishCard key={d.id} dish={d} onAdd={(dish) => logItem(dish)} index={i} />
         ))}
+
+        <button onClick={() => setView("add")}
+          className="w-full mt-2 border border-dashed border-white/15 text-white/50 py-3.5 rounded-xl text-sm font-bold active:scale-[0.98] transition-transform">
+          {query.trim() && matches.length === 0 ? `Can't find "${query.trim()}" — add it` : "+ Add a dish to the database"}
+        </button>
+
         {cartSection}
       </div>
     );
@@ -537,17 +590,17 @@ function NutriAI({ remaining, onLog, onBack }) {
   const [skill, setSkill] = useState("beginner");
   const [recipe, setRecipe] = useState(null);
   const [loading, setLoading] = useState(false);
+  const [error, setError] = useState(null);
 
   async function generate() {
     setLoading(true);
     setRecipe(null);
-    const res = await fetch("http://localhost:3001/recipe", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ remaining, equipment, skill }),
-    });
-    const data = await res.json();
-    setRecipe(data);
+    setError(null);
+    try {
+      setRecipe(await postJSON("/recipe", { remaining, equipment, skill }));
+    } catch (err) {
+      setError(err.message);
+    }
     setLoading(false);
   }
 
@@ -590,6 +643,7 @@ function NutriAI({ remaining, onLog, onBack }) {
             className="w-full bg-[#C6FF3D] text-black py-4 rounded-2xl font-extrabold text-lg active:scale-[0.98] transition-transform">
             {loading ? "Cooking up an idea…" : "Suggest something to cook"}
           </button>
+          {error && <p className="text-[#FF6B4A] text-sm mt-3">{error}</p>}
         </>
       )}
 
@@ -626,6 +680,139 @@ function NutriAI({ remaining, onLog, onBack }) {
         </div>
       )}
     </div>
+  );
+}
+
+function AddDish({ onAdded, onBack }) {
+  const [rawText, setRawText] = useState("");
+  const [draft, setDraft] = useState(null);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState(null);
+
+  async function extract() {
+    setBusy(true);
+    setError(null);
+    try {
+      const parsed = await postJSON("/extract", { rawText });
+      setDraft({
+        ...parsed,
+        allergens: Array.isArray(parsed.allergens) ? parsed.allergens : [],
+        protein_g: Math.round(parsed.protein_g ?? 0),
+        carbs_g: Math.round(parsed.carbs_g ?? 0),
+        fibre_g: Math.round(parsed.fibre_g ?? 0),
+      });
+    } catch (err) {
+      setError(err.message);
+    }
+    setBusy(false);
+  }
+
+  async function save() {
+    setBusy(true);
+    setError(null);
+    try {
+      onAdded(toDish(await postJSON("/dishes", draft)));
+    } catch (err) {
+      setError(err.message);
+      setBusy(false);
+    }
+  }
+
+  function edit(patch) {
+    setDraft((prev) => ({ ...prev, ...patch }));
+  }
+
+  const shell = (children) => (
+    <div className="min-h-screen bg-[#0F0F13] text-[#F5F5F0] px-6 py-8 font-['Space_Grotesk']">
+      <button onClick={onBack} className="text-white/40 text-sm mb-6 font-mono">← back</button>
+      {children}
+      {error && <p className="text-[#FF6B4A] text-sm mt-3">{error}</p>}
+    </div>
+  );
+
+  if (!draft) {
+    return shell(
+      <>
+        <h1 className="text-2xl font-extrabold mb-1">Add a dish</h1>
+        <p className="text-white/40 text-sm mb-6">
+          Paste the menu description or nutrition panel. We'll pull the numbers out, you check them,
+          and everyone gets the dish.
+        </p>
+
+        <textarea
+          value={rawText} onChange={(e) => setRawText(e.target.value)} rows={7}
+          placeholder="e.g. Chipotle chicken burrito bowl — brown rice, black beans, fajita veggies. 45g protein, 62g carbs, 14g fibre."
+          className="w-full bg-white/5 text-white text-sm px-4 py-3 rounded-xl outline-none placeholder:text-white/30 resize-none"
+        />
+
+        <button
+          onClick={extract} disabled={busy || rawText.trim().length < 10}
+          className="mt-6 w-full bg-[#C6FF3D] text-black py-4 rounded-2xl font-extrabold text-lg disabled:opacity-30 active:scale-[0.98] transition-transform">
+          {busy ? "Reading it…" : "Pull out the nutrition"}
+        </button>
+      </>
+    );
+  }
+
+  const estimated = draft.confidence !== "high";
+
+  return shell(
+    <>
+      <h1 className="text-2xl font-extrabold mb-1">Check the numbers</h1>
+      <p className="text-white/40 text-sm mb-4">Fix anything that looks off before it goes in the database.</p>
+
+      <span className={`inline-block text-[10px] font-mono px-2 py-0.5 rounded-full mb-4 ${estimated ? "bg-[#FF6B4A]/20 text-[#FF6B4A]" : "bg-[#34E4A0]/20 text-[#34E4A0]"}`}>
+        {estimated ? "estimated" : "stated on the source"}
+      </span>
+      {draft.source_note && <p className="text-white/40 text-xs mb-4 leading-relaxed">{draft.source_note}</p>}
+
+      <input
+        value={draft.dish_name ?? ""} onChange={(e) => edit({ dish_name: e.target.value })} placeholder="Dish name"
+        className="w-full bg-white/5 text-white px-4 py-3 rounded-xl mb-2 outline-none placeholder:text-white/30"
+      />
+      <input
+        value={draft.restaurant_name ?? ""} onChange={(e) => edit({ restaurant_name: e.target.value })} placeholder="Restaurant"
+        className="w-full bg-white/5 text-white px-4 py-3 rounded-xl mb-4 outline-none placeholder:text-white/30"
+      />
+
+      <Stepper label="Protein" value={draft.protein_g} onChange={(v) => edit({ protein_g: v })} color={COLORS.protein} />
+      <Stepper label="Fibre" value={draft.fibre_g} onChange={(v) => edit({ fibre_g: v })} color={COLORS.fibre} step={1} />
+      <Stepper label="Carbs" value={draft.carbs_g} onChange={(v) => edit({ carbs_g: v })} color={COLORS.carbs} step={5} />
+
+      <div className="mt-6">
+        <p className="text-white/40 text-xs uppercase tracking-wide mb-2 font-mono">Diet</p>
+        <div className="flex gap-2">
+          {[{ veg: true, l: "Vegetarian" }, { veg: false, l: "Non-veg" }].map((o) => (
+            <button key={o.l} onClick={() => edit({ is_veg: o.veg })}
+              className={`flex-1 py-2.5 rounded-xl text-sm font-bold transition-colors ${draft.is_veg === o.veg ? "bg-[#C6FF3D] text-black" : "bg-white/5 text-white/60"}`}>
+              {o.l}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      <div className="mt-6">
+        <p className="text-white/40 text-xs uppercase tracking-wide mb-2 font-mono">Contains</p>
+        <div className="flex flex-wrap gap-2">
+          {ALLERGENS.map((a) => (
+            <button key={a}
+              onClick={() => edit({ allergens: draft.allergens.includes(a) ? draft.allergens.filter((x) => x !== a) : [...draft.allergens, a] })}
+              className={`px-3 py-1.5 rounded-full text-sm font-bold transition-colors ${draft.allergens.includes(a) ? "bg-[#FF6B4A] text-black" : "bg-white/5 text-white/60"}`}>
+              {a}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      <button
+        onClick={save} disabled={busy || !draft.dish_name?.trim() || !draft.restaurant_name?.trim()}
+        className="mt-8 w-full bg-[#C6FF3D] text-black py-4 rounded-2xl font-extrabold text-lg disabled:opacity-30 active:scale-[0.98] transition-transform">
+        {busy ? "Saving…" : "Add to the database"}
+      </button>
+      <button onClick={() => setDraft(null)} className="mt-3 w-full text-white/40 text-sm font-mono">
+        start over
+      </button>
+    </>
   );
 }
 

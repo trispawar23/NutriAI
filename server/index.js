@@ -1,16 +1,13 @@
 import express from "express";
 import cors from "cors";
-import dotenv from "dotenv";
-import { GoogleGenerativeAI } from "@google/generative-ai";
-
-dotenv.config();
+import { model, supabaseAdmin } from "./clients.js";
+import { embedDish } from "./dish-embedding.js";
 
 const app = express();
 app.use(cors());
 app.use(express.json());
 
-const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
-const model = genAI.getGenerativeModel({ model: "gemini-3.6-flash" });
+const KNOWN_ALLERGENS = ["gluten", "dairy", "soy", "nuts", "egg"];
 
 app.post("/extract", async (req, res) => {
   const { rawText } = req.body;
@@ -40,6 +37,93 @@ ${rawText}`;
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: "extraction failed" });
+  }
+});
+
+function nonNegativeNumber(value) {
+  const n = Number(value);
+  return Number.isFinite(n) && n >= 0 ? n : null;
+}
+
+async function findOrCreateRestaurant(name) {
+  // Match case-insensitively so "Sweetgreen" and "sweetgreen" do not become two
+  // entries. The name is user-supplied, so neutralise ilike's wildcards.
+  const pattern = name.replace(/[\\%_]/g, (char) => `\\${char}`);
+
+  const { data: existing, error: lookupError } = await supabaseAdmin
+    .from("restaurants")
+    .select("id")
+    .ilike("name", pattern)
+    .limit(1)
+    .maybeSingle();
+  if (lookupError) throw lookupError;
+  if (existing) return existing.id;
+
+  const { data: created, error: insertError } = await supabaseAdmin
+    .from("restaurants")
+    .insert({ name })
+    .select("id")
+    .single();
+  if (insertError) throw insertError;
+  return created.id;
+}
+
+app.post("/dishes", async (req, res) => {
+  const { dish_name, restaurant_name, is_veg, allergens, protein_g, carbs_g, fibre_g, confidence } = req.body;
+
+  const name = String(dish_name ?? "").trim();
+  const restaurantName = String(restaurant_name ?? "").trim();
+  if (!name || !restaurantName) {
+    return res.status(400).json({ error: "dish_name and restaurant_name are required" });
+  }
+
+  const protein = nonNegativeNumber(protein_g);
+  const carbs = nonNegativeNumber(carbs_g);
+  if (protein === null || carbs === null) {
+    return res.status(400).json({ error: "protein_g and carbs_g must be non-negative numbers" });
+  }
+  const fibre = nonNegativeNumber(fibre_g);
+
+  try {
+    const restaurantId = await findOrCreateRestaurant(restaurantName);
+
+    const { data: dish, error } = await supabaseAdmin
+      .from("dishes")
+      .insert({
+        restaurant_id: restaurantId,
+        name,
+        is_veg: Boolean(is_veg),
+        allergens: (Array.isArray(allergens) ? allergens : []).filter((a) => KNOWN_ALLERGENS.includes(a)),
+        protein_g: protein,
+        carbs_g: carbs,
+        fibre_g: fibre,
+        // Only let fibre count towards the ranking when the source stated it
+        // outright rather than the model guessing a plausible number.
+        fibre_verified: fibre !== null && confidence === "high",
+      })
+      .select("id, name, is_veg, allergens, protein_g, carbs_g, fibre_g, fibre_verified")
+      .single();
+
+    if (error) {
+      if (error.code === "23505") {
+        return res.status(409).json({ error: `${name} is already listed for ${restaurantName}` });
+      }
+      throw error;
+    }
+
+    // Swap suggestions need the embedding, but a dish without one is still
+    // worth keeping — the backfill script can pick it up later.
+    try {
+      const embedding = await embedDish({ ...dish, restaurant_name: restaurantName });
+      await supabaseAdmin.from("dishes").update({ embedding }).eq("id", dish.id);
+    } catch (embedErr) {
+      console.error(`embedding failed for dish ${dish.id}:`, embedErr);
+    }
+
+    res.status(201).json({ ...dish, restaurants: { name: restaurantName } });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: "could not save dish" });
   }
 });
 
